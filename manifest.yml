@@ -1,0 +1,15 @@
+---
+applications:
+- name: mailgun-contact-form-rust
+  memory: 128M
+  instances: 2
+  buildpacks:
+  - binary_buildpack
+  command: ./mailgun-contact-form
+  path: target/x86_64-unknown-linux-musl/release/mailgun-contact-form.zip
+  env:
+    RUST_LOG: "actix_web=info,mailgun_contact_form=info"
+    MAILGUN_API_KEY: ((MAILGUN_API_KEY))
+    MAILGUN_DOMAIN: ((MAILGUN_DOMAIN))
+    MAILGUN_TO_ADDRESS: ((MAILGUN_TO_ADDRESS))
+    MAILGUN_REDIRECT_URL: ((MAILGUN_REDIRECT_URL))
