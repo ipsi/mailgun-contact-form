@@ -8,6 +8,10 @@ RUN cargo build --release && mv ./target/release/mailgun-contact-form ./mailgun-
 # Runtime image
 FROM debian:bullseye-slim
 
+RUN apt update; \
+    apt install -y --no-install-recommends \
+        ca-certificates
+
 # Run as "app" user
 RUN useradd -ms /bin/bash app
 

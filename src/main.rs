@@ -29,12 +29,13 @@
 use env_logger::{Builder, Target};
 use std::error::Error;
 use axum::{Form, Json, Router};
-use axum::http::StatusCode;
+use axum::http::{Method, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::post;
 use log::{error, info};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
+use tower_http::cors::{Any, CorsLayer};
 
 #[derive(Deserialize)]
 struct FormData {
@@ -142,7 +143,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     info!("Binding to {}:{}", bind_address, port);
 
-    let app = Router::new().route("/", post(send_form));
+    let cors = CorsLayer::new()
+        // allow `GET` and `POST` when accessing the resource
+        .allow_methods([Method::GET, Method::POST])
+        // allow requests from any origin
+        .allow_origin(Any);
+
+    let app = Router::new().route("/", post(send_form)).layer(cors);
 
     axum::Server::bind(&format!("{}:{}", bind_address, port).parse().unwrap())
         .serve(app.into_make_service())

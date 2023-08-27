@@ -6,6 +6,8 @@ edition = "2021"
 
 [dependencies]
 axum = { version = "0.6.18" }
+tower = "0.4.13"
+tower-http = { version = "0.4.0", features=["cors"] }
 reqwest = { version = "0.11.18", features=["json"] }
 tokio = { version = "1.28.2", features=["full"] }
 serde = { version = "1.0", features=["derive"] }
