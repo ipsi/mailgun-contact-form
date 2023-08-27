@@ -28,7 +28,7 @@
 
 use env_logger::{Builder, Target};
 use std::error::Error;
-use axum::{Form, Router};
+use axum::{Form, Json, Router};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::post;
@@ -52,6 +52,20 @@ struct MailGunData<'a> {
     text: &'a str,
 }
 
+#[derive(Serialize)]
+enum ResponseStatus {
+    Ok,
+    MailAgentError,
+    DataFormatError,
+    InternalError,
+}
+
+#[derive(Serialize)]
+struct ResponseData {
+    status: ResponseStatus,
+    message: Option<String>,
+}
+
 #[derive(Deserialize)]
 struct MailGunErrorResponse {
     message: String,
@@ -62,6 +76,7 @@ lazy_static!(
     static ref DOMAIN: String = std::env::var("MAILGUN_DOMAIN").unwrap();
     static ref TO: String = std::env::var("MAILGUN_TO_ADDRESS").unwrap();
     static ref HOST: String = format!("https://api.mailgun.net/v3/{}/messages", DOMAIN.as_str());
+    static ref CLIENT: reqwest::Client = reqwest::Client::new();
 );
 
 async fn send_form(Form(req): Form<FormData>) -> impl IntoResponse {
@@ -74,8 +89,7 @@ async fn send_form(Form(req): Form<FormData>) -> impl IntoResponse {
         subject: &req.title,
         text: &req.body,
     };
-    let client = reqwest::Client::new();
-    let response = client.post(HOST.as_str())
+    let response = CLIENT.post(HOST.as_str())
         .basic_auth("api", Some(API_KEY.as_str()))
         .header("Content-Type", "application/x-www-form-urlencoded")
         .form(&data)
@@ -85,23 +99,23 @@ async fn send_form(Form(req): Form<FormData>) -> impl IntoResponse {
     match response {
         Ok(response) if response.status().is_success() => {
             info!("Mail sent successfully");
-            (StatusCode::OK, serde_json::json!({"status": "OK"}).to_string())
+            (StatusCode::OK, Json(ResponseData { status: ResponseStatus::Ok, message: None }))
         }
         Ok(response) => {
             match response.json::<MailGunErrorResponse>().await {
                 Ok(data) => {
                     error!("Mailgun error: {}", data.message);
-                    (StatusCode::BAD_GATEWAY, serde_json::json!({"status": "MAIL_AGENT_ERROR", "message": data.message}).to_string())
+                    (StatusCode::BAD_GATEWAY, Json(ResponseData { status: ResponseStatus::MailAgentError, message: Some(data.message) }))
                 }
                 Err(e) => {
                     error!("Error parsing mailgun error response: {}", e);
-                    (StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({"status": "DATA_FORMAT_ERROR", "message": format!("{}", e)}).to_string())
+                    (StatusCode::INTERNAL_SERVER_ERROR, Json(ResponseData { status: ResponseStatus::DataFormatError, message: Some(format!("{}", e)) }))
                 }
             }
         }
         Err(e) => {
             error!("Error sending mail: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({"status": "INTERNAL_ERROR", "message": format!("{}", e)}).to_string())
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(ResponseData { status: ResponseStatus::InternalError, message: Some(format!("{}", e)) }))
         }
     }
 }
