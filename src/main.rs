@@ -30,7 +30,7 @@ use env_logger::{Builder, Target};
 use std::error::Error;
 use axum::{Form, Json, Router};
 use axum::http::{Method, StatusCode};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use log::{error, info};
 use lazy_static::lazy_static;
@@ -57,7 +57,6 @@ struct MailGunData<'a> {
 enum ResponseStatus {
     Ok,
     MailAgentError,
-    DataFormatError,
     InternalError,
 }
 
@@ -80,7 +79,28 @@ lazy_static!(
     static ref CLIENT: reqwest::Client = reqwest::Client::new();
 );
 
-async fn send_form(Form(req): Form<FormData>) -> impl IntoResponse {
+enum ContactFormError {
+    MailGunError(reqwest::Error),
+}
+
+impl From<reqwest::Error> for ContactFormError {
+    fn from(e: reqwest::Error) -> Self {
+        ContactFormError::MailGunError(e)
+    }
+}
+
+impl IntoResponse for ContactFormError {
+    fn into_response(self) -> Response {
+        match self {
+            ContactFormError::MailGunError(e) => {
+                error!("Error sending mail: {}", e);
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(ResponseData { status: ResponseStatus::InternalError, message: Some(format!("{}", e)) })).into_response()
+            }
+        }
+    }
+}
+
+async fn send_form(Form(req): Form<FormData>) -> Result<impl IntoResponse, ContactFormError> {
     let base_from = format!("{} <{}>", req.from_name, req.from_email);
     info!("Sending mail from [{}]", base_from.as_str());
     let from = base_from.as_str();
@@ -95,28 +115,22 @@ async fn send_form(Form(req): Form<FormData>) -> impl IntoResponse {
         .header("Content-Type", "application/x-www-form-urlencoded")
         .form(&data)
         .send()
-        .await;
+        .await?;
 
     match response {
-        Ok(response) if response.status().is_success() => {
+        response if response.status().is_success() => {
             info!("Mail sent successfully");
-            (StatusCode::OK, Json(ResponseData { status: ResponseStatus::Ok, message: None }))
+            Ok((StatusCode::OK, Json(ResponseData { status: ResponseStatus::Ok, message: None })))
         }
-        Ok(response) => {
-            match response.json::<MailGunErrorResponse>().await {
-                Ok(data) => {
-                    error!("Mailgun error: {}", data.message);
-                    (StatusCode::BAD_GATEWAY, Json(ResponseData { status: ResponseStatus::MailAgentError, message: Some(data.message) }))
-                }
-                Err(e) => {
-                    error!("Error parsing mailgun error response: {}", e);
-                    (StatusCode::INTERNAL_SERVER_ERROR, Json(ResponseData { status: ResponseStatus::DataFormatError, message: Some(format!("{}", e)) }))
-                }
-            }
+        response if response.status() == StatusCode::UNAUTHORIZED => {
+            let body = response.text().await?;
+            info!("Received a 401 error trying to call MailGun: {}", body);
+            Ok((StatusCode::INTERNAL_SERVER_ERROR, Json(ResponseData { status: ResponseStatus::MailAgentError, message: Some("error communicating with mail agent".to_string()) })))
         }
-        Err(e) => {
-            error!("Error sending mail: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(ResponseData { status: ResponseStatus::InternalError, message: Some(format!("{}", e)) }))
+        response => {
+            let data = response.json::<MailGunErrorResponse>().await?;
+            error!("Mailgun error: {}", data.message);
+            Ok((StatusCode::BAD_GATEWAY, Json(ResponseData { status: ResponseStatus::MailAgentError, message: Some("error communicating with mail agent".to_string()) })))
         }
     }
 }
